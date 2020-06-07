@@ -1,7 +1,7 @@
 name = "BioParticleSimulation"
 uuid = "de6b0e7e-5d16-4ec8-852c-832f67a21244"
 authors = ["Vladimir Arnautov (mail@pharmcat.net)"]
-version = "0.0.1"
+version = "0.0.2"
 
 [deps]
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
