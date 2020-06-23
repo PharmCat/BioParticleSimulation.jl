@@ -2,6 +2,8 @@ module BioParticleSimulation
 
 using Random, StatsBase, Plots
 
+include("genome.jl")
+
 export FieldSet, fillfield, plotfield, addresource, round
     abstract type AbstractField end
 
@@ -13,7 +15,7 @@ export FieldSet, fillfield, plotfield, addresource, round
     mutable struct FieldSet
         field::Matrix{Union{AbstractField, Bool}}
         list::Vector{AbstractField}
-        rfield::Matrix{Int}
+        rfield::Matrix{Float64}
         makecell::Function
         function FieldSet(x::Int, y::Int)::FieldSet
             new(Matrix{Union{AbstractField, Bool}}(undef, y, x), Vector{AbstractField}(undef, 0), zeros(Int, y, x), makecell_simple)::FieldSet
@@ -95,7 +97,7 @@ end
     const CELL_A = CellType(0, 0.3, 0.000001, 0.0007, 100, 2000, 4000, 100, 100, 10, 1)
 
     mutable struct Cell <: AbstractField
-        enrg::Int
+        enrg::Float64
         x::Int
         y::Int
         livetime::Int
@@ -142,22 +144,22 @@ type -
         x     = size(f.rfield, 2)
         y     = size(f.rfield, 1)
         for i = 1:n
-            rx = rand(1:x)
-            ry = rand(1:y)
+            rx = rand(2:x-1)
+            ry = rand(2:y-1)
             if f.rfield[ry, rx] < 2000 f.rfield[ry, rx] += val end
-            #=
-            if emptycellonfield(f, rx, ry)
-                f.field[ry, rx] = Resource(val)
-                f.e += 1
-            end
-            =#
         end
     end
     function growresource(f::FieldSet, m)
-        for r = 1:size(f.rfield, 1)
-            for c = 1:size(f.rfield, 2)
-                f.rfield[r, c] = Int(ceil(f.rfield[r, c] * m))
+        for r = 2:size(f.rfield, 1)-1
+            for c = 2:size(f.rfield, 2)-1
+                f.rfield[r, c] += f.rfield[r, c] * m
                 if f.rfield[r, c] > 2000 f.rfield[r, c] = 2000 end
+                if f.rfield[r, c] > 10
+                    if f.rfield[r, c] > f.rfield[r, c + 1] f.rfield[r, c] -=1;  f.rfield[r, c + 1] +=1 end
+                    if f.rfield[r, c] > f.rfield[r + 1, c] f.rfield[r, c] -=1;  f.rfield[r + 1, c] +=1 end
+                    if f.rfield[r, c] > f.rfield[r, c - 1] f.rfield[r, c] -=1;  f.rfield[r, c - 1] +=1 end
+                    if f.rfield[r, c] > f.rfield[r - 1, c] f.rfield[r, c] -=1;  f.rfield[r - 1, c] +=1 end
+                end
             end
         end
     end
@@ -182,6 +184,13 @@ type -
         false
     end
 
+    function smovecell(c, x, y)
+        c.enrg -= c.type.movecost
+        setcellfield(c, false)
+        c.x = x
+        c.y = y
+        setcellfield(c, c)
+    end
     function movecell(c)
         vec = sample([UP, DOWN, LEFT, RIGHT])
         newx = c.x + vec[1]
@@ -191,20 +200,16 @@ type -
                 killcell(c, newx, newy)
                 return
             end
-            c.enrg -= c.type.movecost
-
+            #c.enrg -= c.type.movecost
+            smovecell(c, newx, newy)
             if c.enrg + getrfield(c, newx, newy) >= c.type.maxe
+                setrfield(c, newx, newy, getrfield(c, newx, newy) - c.type.maxe + c.enrg)
                 c.enrg = c.type.maxe
             else
                 c.enrg += getrfield(c, newx, newy)
+                setrfield(c, newx, newy, 0)
             end
 
-            setrfield(c, newx, newy, 0)
-
-            setcellfield(c, false)
-            c.x = newx
-            c.y = newy
-            setcellfield(c, c)
         else
             idlecell(c)
         end
@@ -233,24 +238,25 @@ type -
 
     function killcell(c, x, y)
         if sample([true, false], Weights([c.type.killp, 1 - c.type.killp]))
-            setcellfield(c, false)
-            if c.enrg + getfield(c, x, y).type.kille >= c.type.maxe
+            kc = getfield(c, x, y)
+            if c.enrg + kc.type.kille >= c.type.maxe
                 c.enrg = c.type.maxe
             else
-                c.enrg += getfield(c, x, y).type.kille
+                c.enrg += kc.type.kille
             end
-            getfield(c, x, y).enrg = 0
-            getfield(c, x, y).livetime = 0
-            c.x = x
-            c.y = y
-            setcellfield(c, c)
+            #println("KILL!")
+            setcellfield(kc, false)
+            kc.enrg     = 0.0
+            kc.livetime = 0.0
+
+            smovecell(c, x, y)
         else
             idlecell(c)
         end
     end
     function idlecell(c)
         c.enrg -= c.type.idlecost
-        if c.enrg <= 0
+        if c.enrg <= 0 || c.livetime <= 0
             setcellfield(c, false)
         end
     end
@@ -277,9 +283,12 @@ type -
             action =  sample([movecell, replcell, idlecell], Weights([c.type.movep, c.type.replp, 1 - c.type.movep - c.type.replp]))
             action(c)
             c.livetime -= 1
-            if c.livetime <= 0
-                setcellfield(c, false)
-            end
+            #if c.livetime <= 0
+            #    setcellfield(c, false)
+            #end
+        end
+        if c.enrg <= 0 || c.livetime <= 0
+            setcellfield(c, false)
         end
     end
 
@@ -291,7 +300,7 @@ type -
         for c in f.list
             cellaction(c)
         end
-        deleteat!(f.list, findall(x -> x.enrg <=0 || x.livetime <= 0, f.list))
+        deleteat!(f.list, findall(x -> x.enrg <= 0.0 || x.livetime <= 0.0, f.list))
         nothing
     end
 
@@ -315,7 +324,9 @@ type -
                 end
             end
         end
-        p = heatmap(f.rfield, c = :greens, legend = false)
+        mygrad = cgrad([:white, :green])
+        p = heatmap(f.rfield, c = mygrad, clim = (0, 500), legend = false)
+        #p = heatmap(f.rfield, c = :greens, clim = (0, 2000), legend = false)
         p = scatter!(mx[:,2], mx[:,1], title = "Cells", color = :red, legend = false)
         #p = scatter!(p, mxr[:,1], mxr[:,2], title = "Cells", color = :green, legend = false)
         p
